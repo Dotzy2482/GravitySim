@@ -1,0 +1,17 @@
+# .NET build output
+bin/
+obj/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Local tool state
+.claude/
+imgui.ini
