@@ -1,5 +1,5 @@
 #version 330 core
-// Full-screen triangle generated from gl_VertexID — no vertex buffer needed.
+// Full-screen triangle generated from gl_VertexID - no vertex buffer needed.
 out vec2 vUV;
 
 void main()

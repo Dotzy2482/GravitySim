@@ -1,5 +1,5 @@
 #version 330 core
-// Compact FXAA (console variant) — cheap edge AA now that MSAA is off.
+// Compact FXAA (console variant) - cheap edge AA now that MSAA is off.
 in vec2 vUV;
 out vec4 FragColor;
 
