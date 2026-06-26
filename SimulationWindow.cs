@@ -790,6 +790,21 @@ public class SimulationWindow : GameWindow
         ImGui.SliderFloat("Bloom threshold", ref _post.BloomThreshold, 0.1f, 3f, "%.2f");
 
         ImGui.Separator();
+        ImGui.TextDisabled("Fluid & heat (v2/v3)");
+        ImGui.Checkbox("Fluid cohesion (SPH)", ref ps.EnableSph);
+        ImGui.SameLine();
+        ImGui.Checkbox("Smooth blobs", ref _particleRenderer.Smooth);
+        ImGui.SliderFloat("Cohesion", ref ps.Cohesion, 0f, 40f, "%.1f");
+        ImGui.SliderFloat("Repulsion", ref ps.Repulsion, 5f, 150f, "%.0f");
+        ImGui.SliderFloat("Viscosity", ref ps.Viscosity, 0f, 1f, "%.2f");
+        ImGui.SliderFloat("Neighbour radius", ref ps.SphRadius, 0.3f, 2.0f, "%.2f");
+        ImGui.SliderFloat("Rest spacing", ref ps.RestDist, 0.1f, 1.5f, "%.2f");
+        if (ps.RestDist >= ps.SphRadius) ps.RestDist = ps.SphRadius * 0.9f;
+        ImGui.SliderFloat("Heat diffusion", ref ps.HeatDiffuse, 0f, 8f, "%.2f");
+        ImGui.Checkbox("Re-coalesce settled debris", ref ps.EnableCoalesce);
+        ImGui.SliderInt("Min cluster size", ref ps.CoalesceMinCluster, 50, 5000);
+
+        ImGui.Separator();
 
         ImGui.SliderFloat("Target FPS", ref _targetFps, 30f, 240f, "%.0f");
         ImGui.SliderInt("Particle cap", ref _pendingParticleCap, 5000, 150000);

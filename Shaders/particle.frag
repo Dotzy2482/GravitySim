@@ -2,8 +2,10 @@
 in float vTemp;
 in float vAlpha;
 in vec3 vColor;
+in float vCrowd;
 
 uniform float uBrightness;
+uniform float uSmooth;
 
 out vec4 FragColor;
 
@@ -23,11 +25,15 @@ vec3 heatColor(float t)
 
 void main()
 {
-    // Round, soft sprite.
     vec2 d = gl_PointCoord * 2.0 - 1.0;
     float r2 = dot(d, d);
     if (r2 > 1.0) discard;
-    float falloff = exp(-r2 * 2.2);
+
+    // Crowded particles use a wider, softer profile and contribute less each, so many
+    // overlapping sprites accumulate into a smooth, connected blob instead of dots.
+    float blend = uSmooth * vCrowd;
+    float falloff = exp(-r2 * mix(2.2, 1.0, blend));
+    float crowdAlpha = mix(1.0, 0.45, blend);
 
     // Hot particles glow as blackbody; cool ones settle to dim material color.
     float hot = clamp(vTemp, 0.0, 1.0);
@@ -37,5 +43,5 @@ void main()
     // HDR intensity: hot cores exceed 1.0 so the bloom pass catches them.
     float intensity = max(uBrightness * (0.25 + 1.9 * vTemp), 0.15);
 
-    FragColor = vec4(col * intensity * falloff, falloff * vAlpha);
+    FragColor = vec4(col * intensity * falloff, falloff * vAlpha * crowdAlpha);
 }

@@ -70,7 +70,18 @@ public class PhysicsEngine
         // physics substep count so its cost stays bounded). Runs even when no bodies
         // remain, so a cloud from a total disruption keeps drifting and cooling.
         if (consumed > 0f)
+        {
             Particles.Step(consumed, Bodies, G, Softening);
+
+            // Settled, cooled debris clusters reform into solid bodies (mass + momentum
+            // conserved), bounding long-running particle counts.
+            var reborn = Particles.ExtractCoalesced();
+            if (reborn != null)
+            {
+                Bodies.AddRange(reborn);
+                ComputeAccelerations();
+            }
+        }
     }
 
     public void Step(float dt)

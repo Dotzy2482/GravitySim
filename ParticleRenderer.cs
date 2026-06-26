@@ -10,7 +10,7 @@ namespace GravitySim;
 /// </summary>
 public class ParticleRenderer : IDisposable
 {
-    private const int FloatsPerParticle = 8;
+    private const int FloatsPerParticle = 9;
 
     private readonly int _vao, _vbo;
     private readonly Shader _shader;
@@ -18,9 +18,11 @@ public class ParticleRenderer : IDisposable
     private int _capacityBytes;
 
     /// <summary>World-space sprite radius (UI-tunable).</summary>
-    public float ParticleRadius = 0.22f;
+    public float ParticleRadius = 0.5f;
     /// <summary>Emissive multiplier feeding the bloom (UI-tunable).</summary>
     public float Brightness = 1.4f;
+    /// <summary>Metaball smoothing: enlarge/soften crowded particles into a connected blob.</summary>
+    public bool Smooth = true;
 
     public ParticleRenderer()
     {
@@ -40,6 +42,8 @@ public class ParticleRenderer : IDisposable
         GL.EnableVertexAttribArray(2);
         GL.VertexAttribPointer(3, 3, VertexAttribPointerType.Float, false, stride, 5 * sizeof(float));
         GL.EnableVertexAttribArray(3);
+        GL.VertexAttribPointer(4, 1, VertexAttribPointerType.Float, false, stride, 8 * sizeof(float));
+        GL.EnableVertexAttribArray(4);
 
         GL.BindVertexArray(0);
     }
@@ -68,6 +72,7 @@ public class ParticleRenderer : IDisposable
             _scratch[o + 5] = ps.Color[i].X;
             _scratch[o + 6] = ps.Color[i].Y;
             _scratch[o + 7] = ps.Color[i].Z;
+            _scratch[o + 8] = ps.Crowd[i];
         }
 
         GL.BindVertexArray(_vao);
@@ -86,6 +91,7 @@ public class ParticleRenderer : IDisposable
         _shader.SetFloat("uViewportHeight", viewportHeight);
         _shader.SetFloat("uParticleRadius", ParticleRadius);
         _shader.SetFloat("uBrightness", Brightness);
+        _shader.SetFloat("uSmooth", Smooth ? 1f : 0f);
 
         GL.Enable(EnableCap.ProgramPointSize);
         GL.Enable(EnableCap.Blend);
