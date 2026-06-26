@@ -23,8 +23,21 @@ public class PhysicsEngine
     public float TimeScale = 1.0f;
     public bool Paused = false;
     public Integrator Integrator = Integrator.VelocityVerlet;
-    /// <summary>Merge overlapping bodies, conserving mass and momentum.</summary>
+    /// <summary>Detect overlapping bodies and resolve them (merge / fracture).</summary>
     public bool EnableCollisions = false;
+
+    // --- collision → fluid debris (v1) ---
+    /// <summary>When true, hard impacts shatter bodies into hot debris instead of always merging.</summary>
+    public bool EnableFracture = true;
+    /// <summary>Below this specific impact energy Q, bodies simply merge (current behaviour).</summary>
+    public float QMerge = 1.5f;
+    /// <summary>At or above this Q, both bodies fully disrupt into a debris cloud.</summary>
+    public float QDisrupt = 8f;
+    /// <summary>Max fraction of mass thrown off as ejecta during a partial disruption.</summary>
+    public float FractureMassLoss = 0.6f;
+
+    /// <summary>Debris-particle pool. Bodies that shatter spawn into this.</summary>
+    public ParticleSystem Particles { get; } = new();
 
     public List<Body> Bodies { get; } = new();
 
@@ -36,17 +49,28 @@ public class PhysicsEngine
     /// <summary>Advance the simulation by a frame's worth of real time using fixed substeps.</summary>
     public void Update(float frameTime)
     {
-        if (Paused || Bodies.Count == 0) return;
+        if (Paused) return;
 
         // Cap to avoid spiral-of-death after a long stall (window drag, etc.)
         _accumulator += MathF.Min(frameTime, 0.1f) * TimeScale;
 
+        float consumed = 0f;
         while (_accumulator >= Dt)
         {
-            Step(Dt);
-            if (EnableCollisions) HandleCollisions();
+            if (Bodies.Count > 0)
+            {
+                Step(Dt);
+                if (EnableCollisions) HandleCollisions();
+            }
             _accumulator -= Dt;
+            consumed += Dt;
         }
+
+        // Debris advances once per frame over the consumed sim-time (decoupled from the
+        // physics substep count so its cost stays bounded). Runs even when no bodies
+        // remain, so a cloud from a total disruption keeps drifting and cooling.
+        if (consumed > 0f)
+            Particles.Step(consumed, Bodies, G, Softening);
     }
 
     public void Step(float dt)
@@ -95,8 +119,10 @@ public class PhysicsEngine
     }
 
     /// <summary>
-    /// Merge any overlapping pair into the more massive body, conserving mass and
-    /// momentum and blending color/density by mass. Held bodies are left alone.
+    /// Resolve overlapping pairs by specific impact energy Q: gentle touches merge
+    /// (conserving mass and momentum), medium impacts merge but throw off a hot crater
+    /// spray, and hard impacts fully disrupt both bodies into a debris cloud. Held
+    /// bodies are left alone. With <see cref="EnableFracture"/> off, everything merges.
     /// </summary>
     private void HandleCollisions()
     {
@@ -111,26 +137,89 @@ public class PhysicsEngine
                 float touchDist = 0.85f * (a.Radius + b.Radius);
                 if ((a.Position - b.Position).LengthSquared >= touchDist * touchDist) continue;
 
-                Body survivor = a.Mass >= b.Mass ? a : b;
-                Body removed  = survivor == a ? b : a;
-
                 float total = a.Mass + b.Mass;
-                if (!survivor.Anchored)
-                {
-                    survivor.Velocity = (a.Velocity * a.Mass + b.Velocity * b.Mass) / total;
-                    survivor.Position = (a.Position * a.Mass + b.Position * b.Mass) / total;
-                }
-                survivor.Color    = (a.Color * a.Mass + b.Color * b.Mass) / total;
-                survivor.Density  = (a.Density * a.Mass + b.Density * b.Mass) / total;
-                survivor.Emissive = MathF.Max(a.Emissive, b.Emissive);
-                survivor.Mass = total;
-                survivor.UpdateRadius();
 
-                Bodies.Remove(removed);
-                BodiesMerged?.Invoke(removed, survivor);
-                goto restart; // indices shifted; merges are rare, so rescan
+                // Specific impact energy: Q = ½·μ·v_rel² / (m_a + m_b), the kinetic
+                // energy of the collision per unit of total mass. Low → merge,
+                // medium → crater spray, high → both bodies shatter.
+                float mu = a.Mass * b.Mass / total;
+                Vector3 vrel = a.Velocity - b.Velocity;
+                float impactSpeed = vrel.Length;
+                float Q = 0.5f * mu * impactSpeed * impactSpeed / total;
+
+                // Contact point on the line of centres, weighted by radii.
+                float rsum = a.Radius + b.Radius;
+                float tA = rsum > 1e-5f ? a.Radius / rsum : 0.5f;
+                Vector3 contact = a.Position + (b.Position - a.Position) * tA;
+
+                if (!EnableFracture || Q < QMerge)
+                {
+                    Merge(a, b, total);
+                }
+                else if (Q < QDisrupt)
+                {
+                    // Partial disruption: merge, then blow a hot crater spray off the survivor.
+                    Vector3 mergedVel   = (a.Velocity * a.Mass + b.Velocity * b.Mass) / total;
+                    Vector3 mergedColor = (a.Color * a.Mass + b.Color * b.Mass) / total;
+                    Body survivor = Merge(a, b, total);
+
+                    float frac = FractureMassLoss *
+                                 Math.Clamp((Q - QMerge) / MathF.Max(QDisrupt - QMerge, 1e-3f), 0f, 1f);
+                    float ejectMass = survivor.Mass * frac;
+                    if (ejectMass > 0f && !survivor.Anchored)
+                    {
+                        survivor.Mass = MathF.Max(survivor.Mass - ejectMass, 0.01f);
+                        survivor.UpdateRadius();
+                        Particles.SpawnDebris(contact, survivor.Radius, mergedVel, mergedColor,
+                                              ejectMass, contact, impactSpeed, HeatFromQ(Q),
+                                              Particles.SuggestCount(ejectMass));
+                    }
+                }
+                else
+                {
+                    // Full disruption: both bodies become debris.
+                    float heat = HeatFromQ(Q);
+                    Particles.SpawnDebris(a.Position, a.Radius, a.Velocity, a.Color, a.Mass,
+                                          contact, impactSpeed, heat, Particles.SuggestCount(a.Mass));
+                    Particles.SpawnDebris(b.Position, b.Radius, b.Velocity, b.Color, b.Mass,
+                                          contact, impactSpeed, heat, Particles.SuggestCount(b.Mass));
+                    Bodies.Remove(a);
+                    Bodies.Remove(b);
+                    // No survivor to follow; the window nulls a vanished selection defensively.
+                }
+
+                goto restart; // indices shifted; collisions are rare, so rescan
             }
         }
+    }
+
+    /// <summary>Merge b into the more massive body, conserving mass and momentum. Returns the survivor.</summary>
+    private Body Merge(Body a, Body b, float total)
+    {
+        Body survivor = a.Mass >= b.Mass ? a : b;
+        Body removed  = survivor == a ? b : a;
+
+        if (!survivor.Anchored)
+        {
+            survivor.Velocity = (a.Velocity * a.Mass + b.Velocity * b.Mass) / total;
+            survivor.Position = (a.Position * a.Mass + b.Position * b.Mass) / total;
+        }
+        survivor.Color    = (a.Color * a.Mass + b.Color * b.Mass) / total;
+        survivor.Density  = (a.Density * a.Mass + b.Density * b.Mass) / total;
+        survivor.Emissive = MathF.Max(a.Emissive, b.Emissive);
+        survivor.Mass = total;
+        survivor.UpdateRadius();
+
+        Bodies.Remove(removed);
+        BodiesMerged?.Invoke(removed, survivor);
+        return survivor;
+    }
+
+    /// <summary>Map specific impact energy to a peak debris temperature (HDR ~0.3..1.6).</summary>
+    private float HeatFromQ(float Q)
+    {
+        float t = Q / MathF.Max(QDisrupt, 1e-3f);
+        return Math.Clamp(0.5f + 0.9f * t, 0.3f, 1.6f);
     }
 
     /// <summary>All-pairs gravitational acceleration with softening.</summary>

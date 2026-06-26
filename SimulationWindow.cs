@@ -22,7 +22,14 @@ public class SimulationWindow : GameWindow
     private SphereMesh _sphere = null!;
     private GridMesh _grid = null!;
     private LineRenderer _lines = null!;
+    private ParticleRenderer _particleRenderer = null!;
+    private PostProcess _post = null!;
     private ImGuiController _imgui = null!;
+
+    // Adaptive debris budget: throttle spawns to hold the frame-time target.
+    private float _frameMsEma = 16.6f;
+    private float _targetFps = 60f;
+    private int _pendingParticleCap;
 
     // --- UI / interaction state ---
     private const float SidebarWidth = 340f;
@@ -53,9 +60,11 @@ public class SimulationWindow : GameWindow
                    ClientSize = new Vector2i(1440, 900),
                    Title = "GravitySim",
                    API = ContextAPI.OpenGL,
-                   APIVersion = new Version(3, 3),
+                   // 4.3 core: enables SSBOs/compute for the GPU debris path (v2+).
+                   // The scene now renders through an HDR FBO, so MSAA on the default
+                   // framebuffer is gone — anti-aliasing is handled by FXAA in PostProcess.
+                   APIVersion = new Version(4, 3),
                    Profile = ContextProfile.Core,
-                   NumberOfSamples = 4, // MSAA, makes the wireframe grid much cleaner
                })
     {
         VSync = VSyncMode.On;
@@ -67,7 +76,6 @@ public class SimulationWindow : GameWindow
 
         GL.ClearColor(0.012f, 0.012f, 0.03f, 1f); // deep-space near-black
         GL.Enable(EnableCap.DepthTest);
-        GL.Enable(EnableCap.Multisample);
 
         _bodyShader = new Shader("Shaders/body.vert", "Shaders/body.frag");
         _gridShader = new Shader("Shaders/grid.vert", "Shaders/grid.frag");
@@ -75,7 +83,11 @@ public class SimulationWindow : GameWindow
         _sphere = new SphereMesh(latSegments: 32, lonSegments: 64);
         _grid = new GridMesh(size: 175f, resolution: 220);
         _lines = new LineRenderer();
+        _particleRenderer = new ParticleRenderer();
+        _post = new PostProcess(ClientSize.X, ClientSize.Y);
         _imgui = new ImGuiController(ClientSize.X, ClientSize.Y);
+
+        _pendingParticleCap = _physics.Particles.MaxParticles;
 
         _pendingGridSize = _grid.Size;
         _pendingGridRes = _grid.Resolution;
@@ -385,20 +397,40 @@ public class SimulationWindow : GameWindow
         if (ClientSize.X == 0 || ClientSize.Y == 0) return; // minimized
 
         _imgui.Update(this, (float)args.Time);
-
-        GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+        UpdateAdaptiveBudget((float)args.Time);
 
         Matrix4 view = _camera.GetViewMatrix();
         Matrix4 projection = _camera.GetProjectionMatrix(Size.X / (float)Size.Y);
 
+        // Scene → HDR target; debris drawn last (additive) so it glows over everything.
+        _post.BeginScene();
         DrawBodies(view, projection);
         DrawTrailsAndArrows(view, projection);
         if (_showGrid) DrawGrid(view, projection);
+        _particleRenderer.Draw(_physics.Particles, view, projection, ClientSize.Y);
+        _post.Composite(); // bright-pass + blur + composite + FXAA → screen
 
         DrawUI();
         _imgui.Render();
 
         SwapBuffers();
+    }
+
+    /// <summary>
+    /// Hold the frame-time target by scaling how many particles future disruptions
+    /// spawn. With VSync on, frame time only exceeds the target once the GPU/CPU can't
+    /// keep up, at which point we throttle; with headroom the scale recovers toward 1.
+    /// </summary>
+    private void UpdateAdaptiveBudget(float dt)
+    {
+        _frameMsEma = MathHelper.Lerp(_frameMsEma, dt * 1000f, 0.1f);
+        float targetMs = 1000f / MathF.Max(_targetFps, 1f);
+        var ps = _physics.Particles;
+
+        if (_frameMsEma > targetMs * 1.15f)
+            ps.SpawnScale = MathF.Max(0.1f, ps.SpawnScale * 0.96f);
+        else if (_frameMsEma < targetMs * 0.85f)
+            ps.SpawnScale = MathF.Min(1f, ps.SpawnScale * 1.04f);
     }
 
     private void DrawBodies(Matrix4 view, Matrix4 projection)
@@ -586,6 +618,8 @@ public class SimulationWindow : GameWindow
             DrawGlobalSection();
         if (ImGui.CollapsingHeader("Spacetime grid", ImGuiTreeNodeFlags.DefaultOpen))
             DrawGridSection();
+        if (ImGui.CollapsingHeader("Collision & debris", ImGuiTreeNodeFlags.DefaultOpen))
+            DrawDebrisSection();
         if (ImGui.CollapsingHeader("Stats", ImGuiTreeNodeFlags.DefaultOpen))
             DrawStatsSection();
 
@@ -726,6 +760,45 @@ public class SimulationWindow : GameWindow
         ImGui.SliderFloat("Max dip", ref _grid.MaxDip, 1f, 15f, "%.1f");
     }
 
+    private void DrawDebrisSection()
+    {
+        var ps = _physics.Particles;
+
+        if (!_physics.EnableCollisions)
+            ImGui.TextWrapped("Tip: enable \"Collisions\" under Global for impacts to resolve.");
+
+        ImGui.Checkbox("Fracture on impact", ref _physics.EnableFracture);
+        ImGui.SameLine();
+        if (ImGui.Button("Clear debris")) ps.Clear();
+
+        ImGui.SliderFloat("Merge below Q", ref _physics.QMerge, 0.1f, 200f, "%.2f",
+                          ImGuiSliderFlags.Logarithmic);
+        ImGui.SliderFloat("Shatter above Q", ref _physics.QDisrupt, 0.1f, 500f, "%.2f",
+                          ImGuiSliderFlags.Logarithmic);
+        if (_physics.QDisrupt < _physics.QMerge) _physics.QDisrupt = _physics.QMerge;
+
+        ImGui.SliderFloat("Detail (particles/mass)", ref ps.ParticlesPerUnitMass, 100f, 6000f, "%.0f");
+        ImGui.SliderFloat("Cooling rate", ref ps.CoolRate, 0.05f, 3f, "%.2f");
+        ImGui.SliderFloat("Particle life (s)", ref ps.BaseLife, 2f, 40f, "%.1f");
+
+        ImGui.Separator();
+
+        ImGui.SliderFloat("Particle size", ref _particleRenderer.ParticleRadius, 0.03f, 1.0f, "%.2f");
+        ImGui.SliderFloat("Brightness", ref _particleRenderer.Brightness, 0.2f, 4f, "%.2f");
+        ImGui.Checkbox("Bloom", ref _post.Enabled);
+        ImGui.SliderFloat("Bloom strength", ref _post.BloomStrength, 0f, 3f, "%.2f");
+        ImGui.SliderFloat("Bloom threshold", ref _post.BloomThreshold, 0.1f, 3f, "%.2f");
+
+        ImGui.Separator();
+
+        ImGui.SliderFloat("Target FPS", ref _targetFps, 30f, 240f, "%.0f");
+        ImGui.SliderInt("Particle cap", ref _pendingParticleCap, 5000, 150000);
+        if (ImGui.IsItemDeactivatedAfterEdit()) _physics.Particles.Allocate(_pendingParticleCap);
+
+        ImGui.Text($"Particles: {ps.Count} / {ps.MaxParticles}");
+        ImGui.Text($"Spawn scale: {ps.SpawnScale:0.00}x  (adaptive)");
+    }
+
     private void DrawStatsSection()
     {
         float ke = _physics.TotalKineticEnergy();
@@ -761,6 +834,7 @@ public class SimulationWindow : GameWindow
     {
         base.OnResize(e);
         GL.Viewport(0, 0, e.Width, e.Height);
+        _post?.Resize(e.Width, e.Height);
         _imgui.WindowResized(e.Width, e.Height);
     }
 
@@ -779,6 +853,8 @@ public class SimulationWindow : GameWindow
         _sphere.Dispose();
         _grid.Dispose();
         _lines.Dispose();
+        _particleRenderer.Dispose();
+        _post.Dispose();
         _imgui.Dispose();
         base.OnUnload();
     }
