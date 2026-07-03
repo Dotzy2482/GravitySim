@@ -5,8 +5,12 @@ obj/
 # IDE
 .vs/
 .vscode/
+.idea/
 *.user
 *.suo
+
+# Logs
+*.log
 
 # OS
 Thumbs.db
