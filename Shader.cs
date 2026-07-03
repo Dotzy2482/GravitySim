@@ -55,7 +55,9 @@ public class Shader : IDisposable
     public void SetMatrix4(string name, Matrix4 value) => GL.UniformMatrix4(Loc(name), false, ref value);
     public void SetVector3(string name, Vector3 value) => GL.Uniform3(Loc(name), value);
     public void SetVector4(string name, Vector4 value) => GL.Uniform4(Loc(name), value);
+    public void SetVector2(string name, Vector2 value) => GL.Uniform2(Loc(name), value);
     public void SetFloat(string name, float value)     => GL.Uniform1(Loc(name), value);
+    public void SetInt(string name, int value)         => GL.Uniform1(Loc(name), value);
 
     public void Dispose()
     {
