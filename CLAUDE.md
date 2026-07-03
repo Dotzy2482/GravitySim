@@ -99,8 +99,10 @@ settled debris re-coalesces conserving mass. Re-create it for any physics change
 
 ## Roadmap / future work
 
-- **GPU compute port** of the SPH (the reason the context is GL 4.3): SSBOs +
-  `particle_*.comp` dispatches, per the staged design in `docs/collision-fluid-plan.md`.
+- **GPU compute port** of the SPH: SSBOs + `particle_*.comp` dispatches, per the staged
+  design in `docs/collision-fluid-plan.md`. **Deprioritized (2026-07-03, owner decision):**
+  the parallel CPU SPH holds 60 FPS at the default caps, so don't build this unless the
+  particle budget needs to grow well past ~24k. The GL 4.3 context stays in place for it.
 - **Screen-space metaball surface** (depth/thickness pass + smoothing + normal
   reconstruction) for a true connected-liquid look; current approach approximates it
   with crowd-swelled additive sprites.

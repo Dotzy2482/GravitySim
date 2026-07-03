@@ -6,7 +6,13 @@ spheres, a deforming spacetime "rubber sheet" grid underneath whose wells follow
 the gravitational potential in real time, and a Dear ImGui sidebar for live
 editing of every body and simulation parameter.
 
-![tech](https://img.shields.io/badge/.NET-8.0-blueviolet) ![gl](https://img.shields.io/badge/OpenGL-3.3_core-blue) ![ui](https://img.shields.io/badge/UI-ImGui.NET-green)
+Hard collisions don't just merge: depending on impact energy, bodies crater or
+shatter into a **hot, cohesive debris fluid** — an SPH particle cloud that glows
+white-hot at the impact point (blackbody ramp + HDR bloom), splashes and clumps
+like a liquid, spreads heat between neighbours, cools, and eventually
+re-coalesces into new solid bodies with mass and momentum conserved.
+
+![tech](https://img.shields.io/badge/.NET-8.0-blueviolet) ![gl](https://img.shields.io/badge/OpenGL-4.3_core-blue) ![ui](https://img.shields.io/badge/UI-ImGui.NET-green)
 
 ## Build & run
 
@@ -64,6 +70,12 @@ Clicks and typing inside the sidebar never affect the camera or selection
   follow camera, preset buttons, and Reset.
 - **Spacetime grid** — extent, resolution (capped at 300² vertices), well
   strength, and max dip.
+- **Collision & debris** — fracture on/off, the merge/shatter energy thresholds
+  (**Q**), debris detail + per-impact cap, cooling and particle life, sprite
+  size/brightness, bloom controls, fluid cohesion (SPH) sliders — cohesion,
+  repulsion, viscosity, neighbour radius, heat diffusion — smooth-blob
+  rendering, re-coalescence, target FPS, and live particle-count / adaptive
+  spawn-scale readouts.
 - **Stats** — body count, kinetic + potential + total energy, total momentum
   magnitude, FPS.
 
@@ -91,8 +103,15 @@ F = G · m₁ · m₂ / (r² + ε²)
 - Fixed physics timestep with an accumulator, decoupled from the framerate.
 - Dragged and anchored bodies are skipped by the integrator but still exert
   gravity on everything else.
-- Optional collisions: overlapping bodies merge, conserving mass and momentum
-  and blending color/density by mass.
+- Optional collisions, branched on **specific impact energy** `Q = ½µv²/(m₁+m₂)`:
+  low → merge (mass/momentum conserved, color blended by mass); medium → merge
+  plus a hot crater spray with partial mass loss; high → both bodies fully
+  shatter into debris particles.
+- Debris fluid: weakly-compressible SPH (density-pressure with cohesion when
+  sparse, XSPH viscosity) over an O(n) spatial hash; heat seeded from impact
+  energy, diffused between neighbours, radiatively cooled; settled cold clusters
+  reform into solid bodies. All SPH passes run parallel across CPU cores, with
+  spawn caps and an adaptive frame-time budget to hold 60 FPS.
 
 ## Parameters to tweak
 
@@ -118,13 +137,21 @@ Everything important is live in the sidebar. Code-side defaults:
 | `SphereMesh.cs` | Procedural UV-sphere, drawn per body via model matrices |
 | `GridMesh.cs` | The rubber sheet: XZ grid displaced per frame by potential; rebuildable extent/resolution |
 | `LineRenderer.cs` | Streaming VBO for orbit trails and velocity arrows |
+| `ParticleSystem.cs` | Pooled debris fluid: SPH cohesion, heat diffusion/cooling, re-coalescence, one-way body gravity |
+| `SpatialHash.cs` | O(n) hashed uniform grid for particle neighbour queries |
+| `ParticleRenderer.cs` | Additive point sprites with blackbody heat ramp and crowd-based blob smoothing |
+| `PostProcess.cs` | HDR framebuffer, threshold bloom (ping-pong blur), composite, FXAA |
 | `Shader.cs` | GLSL program loading + uniform helpers |
 | `OrbitCamera.cs` | Yaw/pitch/distance orbit camera |
-| `ImGuiController.cs` | Dear ImGui backend for OpenTK / GL 3.3 core (fonts, draw lists, input) |
+| `ImGuiController.cs` | Dear ImGui backend for OpenTK (fonts, draw lists, input) |
 | `SimulationWindow.cs` | `GameWindow`: input (picking, dragging), update loop, render loop, sidebar UI |
 | `Shaders/body.*` | Diffuse-lit planets, rim-glow emissive stars |
 | `Shaders/grid.*` | Semi-transparent wireframe, tinted by well depth |
 | `Shaders/trail.*` | Fading polylines (trails, velocity arrows) |
+| `Shaders/particle.*` | Debris point sprites: heat colour, HDR intensity, blob swell |
+| `Shaders/fullscreen.vert`, `brightpass/blur/composite/fxaa.frag` | Post-process chain |
 
-Physics and rendering stay decoupled: `PhysicsEngine` and `Body` reference only
-`OpenTK.Mathematics` — no OpenGL or UI types.
+Physics and rendering stay decoupled: `PhysicsEngine`, `Body`, `ParticleSystem`
+and `SpatialHash` reference only `OpenTK.Mathematics` — no OpenGL or UI types —
+so the whole physics stack (including fracture, SPH and re-coalescence) can be
+compiled into a headless console app and tested without a GPU.
