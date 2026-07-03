@@ -778,6 +778,7 @@ public class SimulationWindow : GameWindow
         if (_physics.QDisrupt < _physics.QMerge) _physics.QDisrupt = _physics.QMerge;
 
         ImGui.SliderFloat("Detail (particles/mass)", ref ps.ParticlesPerUnitMass, 100f, 6000f, "%.0f");
+        ImGui.SliderInt("Max per impact", ref ps.MaxPerDisruption, 500, 30000);
         ImGui.SliderFloat("Cooling rate", ref ps.CoolRate, 0.05f, 3f, "%.2f");
         ImGui.SliderFloat("Particle life (s)", ref ps.BaseLife, 2f, 40f, "%.1f");
 

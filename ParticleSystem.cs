@@ -34,7 +34,8 @@ public class ParticleSystem
     public int MaxParticles { get; private set; }
 
     // --- general tunables (surfaced in the UI) ---
-    public float ParticlesPerUnitMass = 1400f;  // resolution of a disruption
+    public float ParticlesPerUnitMass = 500f;    // resolution of a disruption
+    public int MaxPerDisruption = 6000;          // hard cap on particles spawned per impact
     public float BaseLife = 16f;                 // seconds before a particle ages out
     public float CoolRate = 0.55f;               // exponential cooling per second
     public float AmbientTemp = 0f;
@@ -100,7 +101,7 @@ public class ParticleSystem
     public int SuggestCount(float mass)
     {
         int n = (int)MathF.Round(ParticlesPerUnitMass * MathF.Sqrt(MathF.Max(mass, 0f)));
-        return Math.Clamp(n, 200, MaxParticles);
+        return Math.Clamp(n, 200, Math.Min(MaxParticles, MaxPerDisruption));
     }
 
     /// <summary>
@@ -170,6 +171,11 @@ public class ParticleSystem
         if (Count == 0 || dt <= 0f) { _coalesceTimer += dt; return; }
 
         const float maxStep = 0.02f;
+        // Cap the fluid's advance per frame. At high TimeScale a frame can carry seconds
+        // of sim-time; integrating all of it needs either many SPH substeps (cost spiral,
+        // the "freeze" on impact) or a huge h (instability). Debris lagging the bodies at
+        // extreme speeds is invisible; a hitch is not.
+        dt = MathF.Min(dt, 4 * maxStep);
         int sub = Math.Clamp((int)MathF.Ceiling(dt / maxStep), 1, 4);
         float h = dt / sub;
         float eps2 = ParticleSoftening * ParticleSoftening + softening * softening;
@@ -209,11 +215,10 @@ public class ParticleSystem
         float invH2 = 1f / h2;
         float rho0 = RestDensity();
 
-        Span<int> buckets = stackalloc int[27]; // reused each iteration (not per-loop alloc)
-
-        // Pass 1: SPH number density at each particle (poly6-ish kernel Wn = (1-(r/h)^2)^3).
-        for (int i = 0; i < Count; i++)
+        // Pass 1: SPH number density (parallel; each particle writes only its own slot).
+        ParallelFor(Count, i =>
         {
+            Span<int> buckets = stackalloc int[27];
             Vector3 xi = Pos[i];
             float rho = 1f; // self contribution Wn(0) = 1
             int nn = 0;
@@ -235,12 +240,13 @@ public class ParticleSystem
             }
             _density[i] = rho;
             Crowd[i] = MathF.Min(1f, nn / 30f);
-        }
+        });
 
-        // Pass 2: pressure force (repulsive above rest density, cohesive below) + XSPH
-        // viscosity + heat diffusion, all from start-of-substep state.
-        for (int i = 0; i < Count; i++)
+        // Pass 2: pressure (repulsive above rest density, cohesive below) + XSPH viscosity
+        // + heat diffusion, all from start-of-substep state (parallel).
+        ParallelFor(Count, i =>
         {
+            Span<int> buckets = stackalloc int[27];
             Vector3 xi = Pos[i], vi = Vel[i];
             float ti = Temp[i];
             float pi = _density[i] - rho0;
@@ -280,11 +286,11 @@ public class ParticleSystem
             _acc[i] = aP;
             _vxsph[i] = wSum > 1e-5f ? vRel / wSum : Vector3.Zero;
             _tdiff[i] = wSum > 1e-5f ? tDiff / wSum : 0f;
-        }
+        });
 
-        // Pass 3: add gravity, integrate, viscosity, heat diffusion.
+        // Pass 3: add gravity, integrate, viscosity, heat diffusion (parallel).
         const float maxA = 600f;
-        for (int i = 0; i < Count; i++)
+        ParallelFor(Count, i =>
         {
             Vector3 xi = Pos[i];
 
@@ -310,13 +316,20 @@ public class ParticleSystem
             Temp[i] += HeatDiffuse * _tdiff[i] * h;
             Vel[i] = v;
             Pos[i] = xi + v * h;
-        }
+        });
 
         if (AccreteOnContact)
         {
             int i = 0;
             while (i < Count) { if (Absorbed(Pos[i], bodies)) SwapRemove(i); else i++; }
         }
+    }
+
+    /// <summary>Run <paramref name="body"/> over [0,count): parallel above a threshold, else serial.</summary>
+    private static void ParallelFor(int count, Action<int> body)
+    {
+        if (count < 2048) { for (int i = 0; i < count; i++) body(i); }
+        else System.Threading.Tasks.Parallel.For(0, count, body);
     }
 
     /// <summary>Rest density: SPH number density of a regular lattice at RestDist spacing.</summary>
