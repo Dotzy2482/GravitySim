@@ -23,11 +23,13 @@ public class SimulationWindow : GameWindow
     private GridMesh _grid = null!;
     private LineRenderer _lines = null!;
     private ParticleRenderer _particleRenderer = null!;
+    private Starfield _starfield = null!;
     private PostProcess _post = null!;
     private ImGuiController _imgui = null!;
 
     // Adaptive debris budget: throttle spawns to hold the frame-time target.
     private float _frameMsEma = 16.6f;
+    private float _timeSeconds;
     private float _targetFps = 60f;
     private int _pendingParticleCap;
 
@@ -84,6 +86,7 @@ public class SimulationWindow : GameWindow
         _grid = new GridMesh(size: 175f, resolution: 220);
         _lines = new LineRenderer();
         _particleRenderer = new ParticleRenderer();
+        _starfield = new Starfield();
         _post = new PostProcess(ClientSize.X, ClientSize.Y);
         _imgui = new ImGuiController(ClientSize.X, ClientSize.Y);
 
@@ -396,6 +399,7 @@ public class SimulationWindow : GameWindow
         base.OnRenderFrame(args);
         if (ClientSize.X == 0 || ClientSize.Y == 0) return; // minimized
 
+        _timeSeconds += (float)args.Time;
         _imgui.Update(this, (float)args.Time);
         UpdateAdaptiveBudget((float)args.Time);
 
@@ -404,6 +408,7 @@ public class SimulationWindow : GameWindow
 
         // Scene → HDR target; debris drawn last (additive) so it glows over everything.
         _post.BeginScene();
+        _starfield.Draw(view, projection, _camera.Position, _timeSeconds);
         DrawBodies(view, projection);
         DrawTrailsAndArrows(view, projection);
         if (_showGrid) DrawGrid(view, projection);
@@ -871,6 +876,7 @@ public class SimulationWindow : GameWindow
         _grid.Dispose();
         _lines.Dispose();
         _particleRenderer.Dispose();
+        _starfield.Dispose();
         _post.Dispose();
         _imgui.Dispose();
         base.OnUnload();
