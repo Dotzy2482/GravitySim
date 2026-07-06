@@ -16,6 +16,8 @@ public class Body
     public Vector3 Color;
     /// <summary>0 = lit like a planet, 1 = fully self-luminous (a star).</summary>
     public float Emissive;
+    /// <summary>Random per-body seed for procedural surface variation (visual only).</summary>
+    public float Seed = Random.Shared.NextSingle() * 61.7f;
     /// <summary>Exerts gravity but is never moved by the integrator.</summary>
     public bool Anchored;
     /// <summary>True while the user drags this body; integration is skipped.</summary>

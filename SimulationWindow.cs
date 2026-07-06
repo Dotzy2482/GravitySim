@@ -445,6 +445,7 @@ public class SimulationWindow : GameWindow
         _bodyShader.SetMatrix4("uProjection", projection);
         _bodyShader.SetVector3("uViewPos", _camera.Position);
         _bodyShader.SetVector3("uLightPos", FindLightPosition());
+        _bodyShader.SetFloat("uTime", _timeSeconds);
 
         foreach (var body in _physics.Bodies)
         {
@@ -452,6 +453,7 @@ public class SimulationWindow : GameWindow
                           * Matrix4.CreateTranslation(body.Position);
             _bodyShader.SetMatrix4("uModel", model);
             _bodyShader.SetVector3("uColor", body.Color);
+            _bodyShader.SetFloat("uSeed", body.Seed);
             // Selected bodies get a small emissive boost on top of the outline.
             float emissive = body == _selected
                 ? MathF.Min(1f, body.Emissive + 0.25f)
@@ -472,6 +474,7 @@ public class SimulationWindow : GameWindow
                           * Matrix4.CreateTranslation(_selected.Position);
             _bodyShader.SetMatrix4("uModel", model);
             _bodyShader.SetVector3("uColor", HighlightColor);
+            _bodyShader.SetFloat("uSeed", _selected.Seed);
             _bodyShader.SetFloat("uEmissive", 1f);
             _sphere.Draw();
 

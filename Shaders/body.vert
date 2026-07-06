@@ -8,11 +8,13 @@ uniform mat4 uProjection;
 
 out vec3 vNormal;
 out vec3 vWorldPos;
+out vec3 vObjPos;
 
 void main()
 {
     vec4 world = uModel * vec4(aPosition, 1.0);
     vWorldPos = world.xyz;
+    vObjPos = aPosition; // unit-sphere position: stable domain for surface noise
     // Model is translate * uniform scale, so transforming the normal by the
     // upper 3x3 and renormalizing is exact.
     vNormal = normalize(mat3(uModel) * aNormal);
