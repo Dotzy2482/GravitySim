@@ -15,6 +15,7 @@ public class SimulationWindow : GameWindow
 {
     private readonly PhysicsEngine _physics = new();
     private readonly OrbitCamera _camera = new();
+    private readonly MergeAnimator _mergeAnim = new();
 
     private Shader _bodyShader = null!;
     private Shader _gridShader = null!;
@@ -99,6 +100,7 @@ public class SimulationWindow : GameWindow
         _physics.BodiesMerged += (removed, survivor) =>
         {
             if (_selected == removed) _selected = survivor;
+            _mergeAnim.OnMerge(removed, survivor);
         };
 
         LoadPreset(_currentPreset);
@@ -122,6 +124,7 @@ public class SimulationWindow : GameWindow
 
         HandleInput(dt);
         _physics.Update(dt);
+        _mergeAnim.Update(_physics.Paused ? 0f : dt);
 
         // Selection can vanish via collisions even with the merge handler (defensive).
         if (_selected != null && !_physics.Bodies.Contains(_selected))
@@ -449,7 +452,7 @@ public class SimulationWindow : GameWindow
 
         foreach (var body in _physics.Bodies)
         {
-            Matrix4 model = Matrix4.CreateScale(body.Radius)
+            Matrix4 model = Matrix4.CreateScale(_mergeAnim.RenderRadius(body))
                           * Matrix4.CreateTranslation(body.Position);
             _bodyShader.SetMatrix4("uModel", model);
             _bodyShader.SetVector3("uColor", body.Color);
@@ -460,6 +463,52 @@ public class SimulationWindow : GameWindow
                 : body.Emissive;
             _bodyShader.SetFloat("uEmissive", emissive);
             _sphere.Draw();
+        }
+
+        // Soft-absorption merge ghosts: the removed body shrinks and sinks
+        // into the survivor, squashed along the sink direction, with a hot
+        // contact flare that fades out over the animation.
+        foreach (var anim in _mergeAnim.Active)
+        {
+            float progress = MergeAnimator.Progress(anim);
+            float scale = MergeAnimator.GhostScale(anim) * anim.GhostRadius;
+            if (scale < 1e-3f) continue;
+
+            Vector3 ghostPos = _mergeAnim.GhostPosition(anim);
+            Vector3 axis = anim.StartOffset.LengthSquared > 1e-8f
+                ? anim.StartOffset.Normalized() : Vector3.UnitY;
+
+            // Squash along the sink axis: rotate X onto the axis, scale X.
+            float squash = 1f - 0.35f * MathF.Sin(progress * MathF.PI);
+            Vector3 rotAxis = Vector3.Cross(Vector3.UnitX, axis);
+            Matrix4 rot = rotAxis.LengthSquared > 1e-8f
+                ? Matrix4.CreateFromAxisAngle(rotAxis.Normalized(),
+                      MathF.Acos(Math.Clamp(Vector3.Dot(Vector3.UnitX, axis), -1f, 1f)))
+                : Matrix4.Identity;
+            Matrix4 model = Matrix4.CreateScale(squash * scale, scale, scale)
+                          * rot
+                          * Matrix4.CreateTranslation(ghostPos);
+
+            _bodyShader.SetMatrix4("uModel", model);
+            _bodyShader.SetVector3("uColor",
+                Vector3.Lerp(anim.GhostColor, anim.Survivor.Color, progress));
+            _bodyShader.SetFloat("uSeed", 1f);
+            _bodyShader.SetFloat("uEmissive", 0.15f + 0.35f * progress); // heats up as it sinks
+            _sphere.Draw();
+
+            // Contact flare: tiny emissive sphere at the seam, fading out.
+            float flare = (1f - progress) * 0.35f * anim.GhostRadius;
+            if (flare > 1e-3f)
+            {
+                Vector3 seam = anim.Survivor.Position
+                             + axis * _mergeAnim.RenderRadius(anim.Survivor) * 0.9f;
+                Matrix4 flareModel = Matrix4.CreateScale(flare)
+                                   * Matrix4.CreateTranslation(seam);
+                _bodyShader.SetMatrix4("uModel", flareModel);
+                _bodyShader.SetVector3("uColor", new Vector3(1.0f, 0.62f, 0.25f));
+                _bodyShader.SetFloat("uEmissive", 1f);
+                _sphere.Draw();
+            }
         }
 
         // Outline: redraw the selected body slightly enlarged with front faces
