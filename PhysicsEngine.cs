@@ -165,7 +165,26 @@ public class PhysicsEngine
 
                 if (!EnableFracture || Q < QMerge)
                 {
-                    Merge(a, b, total);
+                    Vector3 gentleVel = (a.Velocity * a.Mass + b.Velocity * b.Mass) / total;
+                    Vector3 gentleColor = (a.Color * a.Mass + b.Color * b.Mass) / total;
+                    Body gentleSurvivor = Merge(a, b, total);
+
+                    // A pinch of glowing dust so even soft merges read as physical.
+                    // Mass is moved from the survivor into the particles, so the
+                    // conservation invariants stay exact.
+                    if (EnableFracture && Q > 0.25f * QMerge && !gentleSurvivor.Anchored)
+                    {
+                        float sparkMass = MathF.Min(total * 0.002f, 0.5f);
+                        if (gentleSurvivor.Mass - sparkMass > 0.01f)
+                        {
+                            gentleSurvivor.Mass -= sparkMass;
+                            gentleSurvivor.UpdateRadius();
+                            Particles.SpawnDebris(contact, gentleSurvivor.Radius, gentleVel,
+                                                  gentleColor, sparkMass, contact, impactSpeed,
+                                                  0.45f,
+                                                  Math.Min(Particles.SuggestCount(sparkMass), 250));
+                        }
+                    }
                 }
                 else if (Q < QDisrupt)
                 {
