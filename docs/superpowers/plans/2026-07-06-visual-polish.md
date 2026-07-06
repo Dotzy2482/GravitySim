@@ -475,8 +475,8 @@ void main()
 
 ```powershell
 dotnet new console -o merge-anim-test --force
-Copy-Item C:\Users\kayas\Desktop\GravitySim\Body.cs merge-anim-test\
-Copy-Item C:\Users\kayas\Desktop\GravitySim\MergeAnimator.cs merge-anim-test\
+Copy-Item <repo>\Body.cs merge-anim-test\
+Copy-Item <repo>\MergeAnimator.cs merge-anim-test\
 dotnet add merge-anim-test package OpenTK.Mathematics --version 4.9.4
 ```
 
