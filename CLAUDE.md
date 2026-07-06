@@ -36,9 +36,12 @@ settled debris re-coalesces conserving mass. Re-create it for any physics change
 | `ParticleSystem.cs` | Pooled SoA debris (hard cap, swap-remove). Weakly-compressible SPH + XSPH viscosity + heat diffusion + re-coalescence (`ExtractCoalesced`). One-way gravity from bodies (O(P·B)) |
 | `SpatialHash.cs` | O(n) hashed uniform grid (counting sort), dedup 27-cell queries. Distance-check every candidate — distinct cells can share a bucket |
 | `ParticleRenderer.cs` + `Shaders/particle.*` | Additive point sprites, blackbody heat ramp, `Crowd` swells dense sprites into connected blobs |
-| `PostProcess.cs` | HDR RGBA16F FBO → bright-pass → ping-pong blur (half-res) → composite → FXAA. Scene MSAA is intentionally OFF (FBO path); FXAA replaces it |
+| `PostProcess.cs` | HDR RGBA16F FBO → soft-knee bright-pass → ping-pong blur (half-res) → composite (ACES tonemap + `Exposure`) → FXAA. Scene MSAA is intentionally OFF (FBO path); FXAA replaces it. No gamma encode anywhere — colors are authored in that space; don't add one without re-tuning everything |
+| `Starfield.cs` + `Shaders/starfield.*` | Procedural background (cube-cell hashed stars + fbm nebula), fullscreen pass drawn first, depth-write off. Output stays below the bloom threshold by design |
+| `MergeAnimator.cs` | GL-free "soft absorption" merge animation (ghost sinks into survivor, eased render radius). Hooks `BodiesMerged`; rendering lives in `SimulationWindow.DrawBodies`. Headless-testable like the physics stack |
+| `UiTheme.cs` | Semantic ImGui color tokens + global style. No raw hex in UI code — change colors here only |
 | `SimulationWindow.cs` | Main loop, input, ImGui sidebar, adaptive spawn budget (`SpawnScale` throttles on frame-time EMA) |
-| Render order | `_post.BeginScene()` → bodies → trails → grid → particles (additive, depth-write off) → `_post.Composite()` → ImGui (LDR, on top) |
+| Render order | `_post.BeginScene()` → starfield (depth-write off) → bodies + merge ghosts → trails → grid → particles (additive, depth-write off) → `_post.Composite()` → ImGui (LDR, on top) |
 
 ## Hard rules (each one was learned the painful way)
 
@@ -94,7 +97,9 @@ settled debris re-coalesces conserving mass. Re-create it for any physics change
 - Debris clumps too hard / looks solid → raise **Repulsion** or lower **Cohesion**.
 - Frame hitches on impact → lower **Detail** or **Max per impact**; the adaptive
   **Spawn scale** readout shows if the auto-throttle is already engaged.
-- Glow too weak/strong → **Brightness**, **Bloom strength**, **Bloom threshold**.
+- Glow too weak/strong → **Brightness**, **Bloom strength**, **Bloom threshold** (Visuals tab).
+- Whole image too dark/bright → **Exposure** (ACES tonemap input gain; old pre-tonemap
+  clipping-to-white behaviour is gone by design).
 - Blobs look like separate dots → enable **Smooth blobs** (crowd-based sprite swell).
 
 ## Roadmap / future work
