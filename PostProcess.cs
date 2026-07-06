@@ -27,8 +27,8 @@ public class PostProcess : IDisposable
     private readonly int _emptyVao = GL.GenVertexArray();
 
     public bool Enabled = true;
-    public float BloomThreshold = 1.0f;
-    public float BloomStrength = 0.9f;
+    public float BloomThreshold = 1.15f;
+    public float BloomStrength = 0.55f;
     public float Exposure = 1.1f;
     public int BlurPasses = 6;   // total horizontal + vertical half-passes
 
