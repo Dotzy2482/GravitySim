@@ -7,8 +7,8 @@ namespace GravitySim;
 ///
 /// Pure data/simulation — owns no GL state; <see cref="ParticleRenderer"/> reads the
 /// arrays each frame to upload them. Particles feel gravity from the massive bodies as a
-/// one-way external field (they never pull back on the bodies), are absorbed on contact,
-/// and cool over time.
+/// one-way external field (they never pull back on the bodies), are absorbed on contact
+/// (mass and momentum fold back into the absorbing body), and cool over time.
 ///
 /// v1: ballistic motion + heat. v2 (<see cref="EnableSph"/>): soft-particle SPH —
 /// neighbour repulsion + cohesion + XSPH viscosity over a <see cref="SpatialHash"/>, so
@@ -318,10 +318,17 @@ public class ParticleSystem
             Pos[i] = xi + v * h;
         });
 
+        // Serial on purpose: accretion mutates the bodies (rule: parallel passes above
+        // may only write their own particle index).
         if (AccreteOnContact)
         {
             int i = 0;
-            while (i < Count) { if (Absorbed(Pos[i], bodies)) SwapRemove(i); else i++; }
+            while (i < Count)
+            {
+                Body? absorber = FindAbsorber(Pos[i], bodies);
+                if (absorber != null) { Accrete(absorber, Mass[i], Vel[i]); SwapRemove(i); }
+                else i++;
+            }
         }
     }
 
@@ -374,10 +381,15 @@ public class ParticleSystem
             Vector3 v = Vel[i] + a * h;
             p += v * h;
 
-            if (AccreteOnContact && Absorbed(p, bodies))
+            if (AccreteOnContact)
             {
-                SwapRemove(i);
-                continue;
+                Body? absorber = FindAbsorber(p, bodies);
+                if (absorber != null)
+                {
+                    Accrete(absorber, Mass[i], v);
+                    SwapRemove(i);
+                    continue;
+                }
             }
 
             Vel[i] = v;
@@ -493,14 +505,28 @@ public class ParticleSystem
         return result;
     }
 
-    private static bool Absorbed(Vector3 p, List<Body> bodies)
+    private static Body? FindAbsorber(Vector3 p, List<Body> bodies)
     {
         for (int b = 0; b < bodies.Count; b++)
         {
             float r = bodies[b].Radius;
-            if ((bodies[b].Position - p).LengthSquared < r * r) return true;
+            if ((bodies[b].Position - p).LengthSquared < r * r) return bodies[b];
         }
-        return false;
+        return null;
+    }
+
+    /// <summary>
+    /// Fold an absorbed particle back into the body so accretion conserves mass and
+    /// momentum. Anchored bodies gain mass but keep their velocity (the anchor absorbs
+    /// the momentum), matching <c>PhysicsEngine.Merge</c>.
+    /// </summary>
+    private static void Accrete(Body body, float mass, Vector3 vel)
+    {
+        float total = body.Mass + mass;
+        if (!body.Anchored)
+            body.Velocity = (body.Velocity * body.Mass + vel * mass) / total;
+        body.Mass = total;
+        body.UpdateRadius();
     }
 
     private void SwapRemove(int i)
