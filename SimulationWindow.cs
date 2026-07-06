@@ -56,6 +56,10 @@ public class SimulationWindow : GameWindow
     private const int MaxTrailPoints = 700;
     private static readonly Vector3 HighlightColor = new(1.0f, 0.85f, 0.25f);
 
+    // FPS sparkline ring buffer (Stats tab).
+    private readonly float[] _fpsHistory = new float[180];
+    private int _fpsCursor;
+
     public SimulationWindow()
         : base(GameWindowSettings.Default,
                new NativeWindowSettings
@@ -672,14 +676,16 @@ public class SimulationWindow : GameWindow
 
         if (ImGui.CollapsingHeader("Selected body", ImGuiTreeNodeFlags.DefaultOpen))
             DrawSelectedSection();
-        if (ImGui.CollapsingHeader("Global", ImGuiTreeNodeFlags.DefaultOpen))
-            DrawGlobalSection();
-        if (ImGui.CollapsingHeader("Spacetime grid", ImGuiTreeNodeFlags.DefaultOpen))
-            DrawGridSection();
-        if (ImGui.CollapsingHeader("Collision & debris", ImGuiTreeNodeFlags.DefaultOpen))
-            DrawDebrisSection();
-        if (ImGui.CollapsingHeader("Stats", ImGuiTreeNodeFlags.DefaultOpen))
-            DrawStatsSection();
+
+        ImGui.Spacing();
+        if (ImGui.BeginTabBar("##sidebar_tabs"))
+        {
+            if (ImGui.BeginTabItem("Sim"))       { DrawSimTab();       ImGui.EndTabItem(); }
+            if (ImGui.BeginTabItem("Visuals"))   { DrawVisualsTab();   ImGui.EndTabItem(); }
+            if (ImGui.BeginTabItem("Collision")) { DrawCollisionTab(); ImGui.EndTabItem(); }
+            if (ImGui.BeginTabItem("Stats"))     { DrawStatsTab();     ImGui.EndTabItem(); }
+            ImGui.EndTabBar();
+        }
 
         ImGui.End();
     }
@@ -758,7 +764,7 @@ public class SimulationWindow : GameWindow
             DeleteSelected();
     }
 
-    private void DrawGlobalSection()
+    private void DrawSimTab()
     {
         if (ImGui.Button("Add Body")) AddBody();
         ImGui.SameLine();
@@ -767,31 +773,18 @@ public class SimulationWindow : GameWindow
 
         ImGui.Separator();
 
-        ImGui.SliderFloat("G", ref _physics.G, 0.01f, 20f, "%.3f", ImGuiSliderFlags.Logarithmic);
-        ImGui.SliderFloat("Time step dt", ref _physics.Dt, 0.0005f, 0.02f, "%.4f", ImGuiSliderFlags.Logarithmic);
+        ImGui.SliderFloat("Gravity G", ref _physics.G, 0.01f, 20f, "%.3f", ImGuiSliderFlags.Logarithmic);
         if (ImGui.SliderFloat("Sim speed", ref _physics.TimeScale, 0.05f, 50f, "%.2fx", ImGuiSliderFlags.Logarithmic))
             UpdateTitle();
-        ImGui.SliderFloat("Softening", ref _physics.Softening, 0.001f, 1f, "%.3f", ImGuiSliderFlags.Logarithmic);
-
-        ImGui.Separator();
 
         bool paused = _physics.Paused;
         if (ImGui.Checkbox("Paused (Space)", ref paused)) { _physics.Paused = paused; UpdateTitle(); }
-        ImGui.Checkbox("Grid (G)", ref _showGrid);
-        ImGui.SameLine();
-        if (ImGui.Checkbox("Trails", ref _showTrails) && !_showTrails)
-            foreach (var body in _physics.Bodies) body.Trail.Clear();
-        ImGui.SameLine();
-        ImGui.Checkbox("Velocity arrows", ref _showVelocityArrows);
-
         ImGui.Checkbox("Collisions (merge)", ref _physics.EnableCollisions);
         ImGui.SameLine();
         ImGui.Checkbox("Drag-to-launch", ref _dragToLaunch);
-
         ImGui.Checkbox("Follow selected (F)", ref _followSelected);
 
         ImGui.Separator();
-
         ImGui.Text("Presets:");
         if (ImGui.Button("1: Two-body")) LoadPreset(1);
         ImGui.SameLine();
@@ -800,30 +793,62 @@ public class SimulationWindow : GameWindow
         if (ImGui.Button("3: Binary")) LoadPreset(3);
         if (ImGui.Button("Reset scene (R)", new System.Numerics.Vector2(-1, 0)))
             LoadPreset(_currentPreset);
+
+        if (ImGui.TreeNode("Advanced##sim"))
+        {
+            ImGui.SliderFloat("Time step dt", ref _physics.Dt, 0.0005f, 0.02f, "%.4f", ImGuiSliderFlags.Logarithmic);
+            HelpMarker("Fixed physics step. Smaller = more accurate, more CPU.");
+            ImGui.SliderFloat("Softening", ref _physics.Softening, 0.001f, 1f, "%.3f", ImGuiSliderFlags.Logarithmic);
+            HelpMarker("Plummer softening length: caps gravity at tiny distances so close passes stay stable.");
+            ImGui.TreePop();
+        }
     }
 
-    private void DrawGridSection()
+    private void DrawVisualsTab()
     {
-        // Extent/resolution rebuild GPU buffers — apply when the slider is released.
-        ImGui.SliderFloat("Extent", ref _pendingGridSize, 40f, 400f, "%.0f");
-        if (ImGui.IsItemDeactivatedAfterEdit())
-            _grid.Rebuild(_pendingGridSize, _pendingGridRes);
+        ImGui.Checkbox("Grid (G)", ref _showGrid);
+        ImGui.SameLine();
+        if (ImGui.Checkbox("Trails", ref _showTrails) && !_showTrails)
+            foreach (var body in _physics.Bodies) body.Trail.Clear();
+        ImGui.SameLine();
+        ImGui.Checkbox("Velocity arrows", ref _showVelocityArrows);
 
-        ImGui.SliderInt("Resolution", ref _pendingGridRes, GridMesh.MinResolution, GridMesh.MaxResolution);
-        if (ImGui.IsItemDeactivatedAfterEdit())
-            _grid.Rebuild(_pendingGridSize, _pendingGridRes);
+        ImGui.SeparatorText("Glow");
+        ImGui.Checkbox("Bloom", ref _post.Enabled);
+        ImGui.SliderFloat("Exposure", ref _post.Exposure, 0.25f, 4f, "%.2f");
+        ImGui.SliderFloat("Bloom strength", ref _post.BloomStrength, 0f, 3f, "%.2f");
+        ImGui.SliderFloat("Bloom threshold", ref _post.BloomThreshold, 0.1f, 3f, "%.2f");
+        HelpMarker("Only pixels brighter than this bloom. Higher = tighter glow.");
 
+        ImGui.SeparatorText("Debris look");
+        ImGui.SliderFloat("Particle size", ref _particleRenderer.ParticleRadius, 0.03f, 1.0f, "%.2f");
+        ImGui.SliderFloat("Brightness", ref _particleRenderer.Brightness, 0.2f, 4f, "%.2f");
+        ImGui.Checkbox("Smooth blobs", ref _particleRenderer.Smooth);
+        HelpMarker("Swells crowded sprites into connected liquid-looking blobs.");
+
+        ImGui.SeparatorText("Spacetime grid");
         ImGui.SliderFloat("Well strength", ref _grid.WellStrength, 0.001f, 0.06f, "%.4f",
                           ImGuiSliderFlags.Logarithmic);
         ImGui.SliderFloat("Max dip", ref _grid.MaxDip, 1f, 15f, "%.1f");
+        if (ImGui.TreeNode("Advanced##grid"))
+        {
+            // Extent/resolution rebuild GPU buffers - apply when the slider is released.
+            ImGui.SliderFloat("Extent", ref _pendingGridSize, 40f, 400f, "%.0f");
+            if (ImGui.IsItemDeactivatedAfterEdit())
+                _grid.Rebuild(_pendingGridSize, _pendingGridRes);
+            ImGui.SliderInt("Resolution", ref _pendingGridRes, GridMesh.MinResolution, GridMesh.MaxResolution);
+            if (ImGui.IsItemDeactivatedAfterEdit())
+                _grid.Rebuild(_pendingGridSize, _pendingGridRes);
+            ImGui.TreePop();
+        }
     }
 
-    private void DrawDebrisSection()
+    private void DrawCollisionTab()
     {
         var ps = _physics.Particles;
 
         if (!_physics.EnableCollisions)
-            ImGui.TextWrapped("Tip: enable \"Collisions\" under Global for impacts to resolve.");
+            ImGui.TextWrapped("Tip: enable \"Collisions\" in the Sim tab for impacts to resolve.");
 
         ImGui.Checkbox("Fracture on impact", ref _physics.EnableFracture);
         ImGui.SameLine();
@@ -831,6 +856,7 @@ public class SimulationWindow : GameWindow
 
         ImGui.SliderFloat("Merge below Q", ref _physics.QMerge, 0.1f, 200f, "%.2f",
                           ImGuiSliderFlags.Logarithmic);
+        HelpMarker("Specific impact energy Q = kinetic energy per unit total mass. Below this: clean merge.");
         ImGui.SliderFloat("Shatter above Q", ref _physics.QDisrupt, 0.1f, 500f, "%.2f",
                           ImGuiSliderFlags.Logarithmic);
         if (_physics.QDisrupt < _physics.QMerge) _physics.QDisrupt = _physics.QMerge;
@@ -840,50 +866,63 @@ public class SimulationWindow : GameWindow
         ImGui.SliderFloat("Cooling rate", ref ps.CoolRate, 0.05f, 3f, "%.2f");
         ImGui.SliderFloat("Particle life (s)", ref ps.BaseLife, 2f, 40f, "%.1f");
 
-        ImGui.Separator();
-
-        ImGui.SliderFloat("Particle size", ref _particleRenderer.ParticleRadius, 0.03f, 1.0f, "%.2f");
-        ImGui.SliderFloat("Brightness", ref _particleRenderer.Brightness, 0.2f, 4f, "%.2f");
-        ImGui.Checkbox("Bloom", ref _post.Enabled);
-        ImGui.SliderFloat("Exposure", ref _post.Exposure, 0.25f, 4f, "%.2f");
-        ImGui.SliderFloat("Bloom strength", ref _post.BloomStrength, 0f, 3f, "%.2f");
-        ImGui.SliderFloat("Bloom threshold", ref _post.BloomThreshold, 0.1f, 3f, "%.2f");
-
-        ImGui.Separator();
-        ImGui.TextDisabled("Fluid & heat (v2/v3)");
+        ImGui.SeparatorText("Fluid & heat");
         ImGui.Checkbox("Fluid cohesion (SPH)", ref ps.EnableSph);
-        ImGui.SameLine();
-        ImGui.Checkbox("Smooth blobs", ref _particleRenderer.Smooth);
-        ImGui.SliderFloat("Cohesion", ref ps.Cohesion, 0f, 40f, "%.1f");
-        ImGui.SliderFloat("Repulsion", ref ps.Repulsion, 5f, 150f, "%.0f");
-        ImGui.SliderFloat("Viscosity", ref ps.Viscosity, 0f, 1f, "%.2f");
-        ImGui.SliderFloat("Neighbour radius", ref ps.SphRadius, 0.3f, 2.0f, "%.2f");
-        ImGui.SliderFloat("Rest spacing", ref ps.RestDist, 0.1f, 1.5f, "%.2f");
-        if (ps.RestDist >= ps.SphRadius) ps.RestDist = ps.SphRadius * 0.9f;
-        ImGui.SliderFloat("Heat diffusion", ref ps.HeatDiffuse, 0f, 8f, "%.2f");
         ImGui.Checkbox("Re-coalesce settled debris", ref ps.EnableCoalesce);
-        ImGui.SliderInt("Min cluster size", ref ps.CoalesceMinCluster, 50, 5000);
+        HelpMarker("Cooled, settled debris clusters reform into solid bodies (mass and momentum conserved).");
 
-        ImGui.Separator();
-
-        ImGui.SliderFloat("Target FPS", ref _targetFps, 30f, 240f, "%.0f");
-        ImGui.SliderInt("Particle cap", ref _pendingParticleCap, 5000, 150000);
-        if (ImGui.IsItemDeactivatedAfterEdit()) _physics.Particles.Allocate(_pendingParticleCap);
-
-        ImGui.Text($"Particles: {ps.Count} / {ps.MaxParticles}");
-        ImGui.Text($"Spawn scale: {ps.SpawnScale:0.00}x  (adaptive)");
+        if (ImGui.TreeNode("Advanced##sph"))
+        {
+            ImGui.SliderFloat("Cohesion", ref ps.Cohesion, 0f, 40f, "%.1f");
+            ImGui.SliderFloat("Repulsion", ref ps.Repulsion, 5f, 150f, "%.0f");
+            ImGui.SliderFloat("Viscosity", ref ps.Viscosity, 0f, 1f, "%.2f");
+            ImGui.SliderFloat("Neighbour radius", ref ps.SphRadius, 0.3f, 2.0f, "%.2f");
+            ImGui.SliderFloat("Rest spacing", ref ps.RestDist, 0.1f, 1.5f, "%.2f");
+            if (ps.RestDist >= ps.SphRadius) ps.RestDist = ps.SphRadius * 0.9f;
+            ImGui.SliderFloat("Heat diffusion", ref ps.HeatDiffuse, 0f, 8f, "%.2f");
+            ImGui.SliderInt("Min cluster size", ref ps.CoalesceMinCluster, 50, 5000);
+            ImGui.TreePop();
+        }
     }
 
-    private void DrawStatsSection()
+    private void DrawStatsTab()
     {
+        var ps = _physics.Particles;
+        var io = ImGui.GetIO();
+
+        _fpsHistory[_fpsCursor] = io.Framerate;
+        _fpsCursor = (_fpsCursor + 1) % _fpsHistory.Length;
+        ImGui.PlotLines("##fps", ref _fpsHistory[0], _fpsHistory.Length, _fpsCursor,
+                        $"FPS {io.Framerate:0.}", 0f, 165f,
+                        new System.Numerics.Vector2(-1f, 46f));
+
         float ke = _physics.TotalKineticEnergy();
         float pe = _physics.TotalPotentialEnergy();
-        ImGui.Text($"Bodies: {_physics.Bodies.Count}");
+        ImGui.Text($"Bodies: {_physics.Bodies.Count}   Particles: {ps.Count} / {ps.MaxParticles}");
         ImGui.Text($"Kinetic energy:   {ke:0.0}");
         ImGui.Text($"Potential energy: {pe:0.0}");
         ImGui.Text($"Total energy:     {ke + pe:0.0}");
         ImGui.Text($"|Momentum|: {_physics.TotalMomentum().Length:0.000}");
-        ImGui.Text($"FPS: {ImGui.GetIO().Framerate:0.}  ({1000f / MathF.Max(ImGui.GetIO().Framerate, 0.001f):0.00} ms)");
+        ImGui.Text($"Spawn scale: {ps.SpawnScale:0.00}x (adaptive)");
+
+        ImGui.SeparatorText("Performance");
+        ImGui.SliderFloat("Target FPS", ref _targetFps, 30f, 240f, "%.0f");
+        ImGui.SliderInt("Particle cap", ref _pendingParticleCap, 5000, 150000);
+        if (ImGui.IsItemDeactivatedAfterEdit()) _physics.Particles.Allocate(_pendingParticleCap);
+    }
+
+    private static void HelpMarker(string text)
+    {
+        ImGui.SameLine();
+        ImGui.TextDisabled("(?)");
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.BeginTooltip();
+            ImGui.PushTextWrapPos(280f);
+            ImGui.TextUnformatted(text);
+            ImGui.PopTextWrapPos();
+            ImGui.EndTooltip();
+        }
     }
 
     private static System.Numerics.Vector3 ToSN(Vector3 v) => new(v.X, v.Y, v.Z);
