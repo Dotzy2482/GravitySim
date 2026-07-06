@@ -90,6 +90,7 @@ public class SimulationWindow : GameWindow
         _starfield = new Starfield();
         _post = new PostProcess(ClientSize.X, ClientSize.Y);
         _imgui = new ImGuiController(ClientSize.X, ClientSize.Y);
+        UiTheme.Apply();
 
         _pendingParticleCap = _physics.Particles.MaxParticles;
 

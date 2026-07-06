@@ -60,7 +60,14 @@ public class ImGuiController : IDisposable
 
         ImGui.CreateContext();
         var io = ImGui.GetIO();
-        io.Fonts.AddFontDefault();
+        // Larger, crisper UI font. Segoe UI ships with every Windows 10/11
+        // install; fall back to the bitmap default anywhere it is missing.
+        string fontPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.Fonts), "segoeui.ttf");
+        if (File.Exists(fontPath))
+            io.Fonts.AddFontFromFileTTF(fontPath, 17f);
+        else
+            io.Fonts.AddFontDefault();
         io.BackendFlags |= ImGuiBackendFlags.RendererHasVtxOffset;
         io.ConfigFlags |= ImGuiConfigFlags.NoMouseCursorChange;
 
