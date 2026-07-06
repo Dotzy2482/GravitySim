@@ -19,5 +19,3 @@ Desktop.ini
 # Local tool state
 .claude/
 imgui.ini
-# AI assistant knowledge base - kept local only (owner decision 2026-07-06)
-CLAUDE.md
