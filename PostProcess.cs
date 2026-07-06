@@ -29,6 +29,7 @@ public class PostProcess : IDisposable
     public bool Enabled = true;
     public float BloomThreshold = 1.0f;
     public float BloomStrength = 0.9f;
+    public float Exposure = 1.1f;
     public int BlurPasses = 6;   // total horizontal + vertical half-passes
 
     public PostProcess(int width, int height)
@@ -131,6 +132,7 @@ public class PostProcess : IDisposable
         GL.Viewport(0, 0, _w, _h);
         _composite.Use();
         _composite.SetFloat("uBloomStrength", BloomStrength);
+        _composite.SetFloat("uExposure", Exposure);
         BindTex(0, _sceneColor, _composite, "uScene");
         BindTex(1, _bloomTex[lastDst], _composite, "uBloom");
         GL.DrawArrays(PrimitiveType.Triangles, 0, 3);

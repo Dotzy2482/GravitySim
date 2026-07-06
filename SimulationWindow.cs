@@ -787,6 +787,7 @@ public class SimulationWindow : GameWindow
         ImGui.SliderFloat("Particle size", ref _particleRenderer.ParticleRadius, 0.03f, 1.0f, "%.2f");
         ImGui.SliderFloat("Brightness", ref _particleRenderer.Brightness, 0.2f, 4f, "%.2f");
         ImGui.Checkbox("Bloom", ref _post.Enabled);
+        ImGui.SliderFloat("Exposure", ref _post.Exposure, 0.25f, 4f, "%.2f");
         ImGui.SliderFloat("Bloom strength", ref _post.BloomStrength, 0f, 3f, "%.2f");
         ImGui.SliderFloat("Bloom threshold", ref _post.BloomThreshold, 0.1f, 3f, "%.2f");
 
